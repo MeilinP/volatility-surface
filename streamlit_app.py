@@ -5,7 +5,7 @@ Real-time IV surface visualization with Polygon.io
 
 import os
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -30,30 +30,29 @@ st.markdown("""
 
 
 @st.cache_data(ttl=30)
-def fetch_data(api_key: str, symbol: str):
-    """Fetch spot price and IV data from Polygon."""
+def fetch_data(api_key: str, symbol: str) -> Tuple[List[Dict], float, str]:
     if not POLYGON_AVAILABLE or not api_key:
         return generate_demo_data(symbol)
 
     try:
         client = RESTClient(api_key)
-        spot = None
-        
         chain = list(client.list_snapshot_options_chain(symbol))
         
-        if chain:
-            underlying = getattr(chain[0], 'underlying_asset', None)
-            if underlying:
-                spot = getattr(underlying, 'price', None)
+        if not chain:
+            return generate_demo_data(symbol)
+        
+        spot = None
+        if hasattr(chain[0], 'underlying_asset') and chain[0].underlying_asset:
+            spot = getattr(chain[0].underlying_asset, 'price', None)
         
         if not spot:
-            try:
-                aggs = list(client.get_aggs(symbol, 1, "minute",
-                    (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'),
-                    datetime.now().strftime('%Y-%m-%d'), limit=1, sort="desc"))
-                spot = aggs[0].close if aggs else None
-            except:
-                pass
+            aggs = list(client.get_aggs(
+                symbol, 1, "minute",
+                (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'),
+                datetime.now().strftime('%Y-%m-%d'),
+                limit=1, sort="desc"
+            ))
+            spot = aggs[0].close if aggs else None
         
         if not spot:
             return generate_demo_data(symbol)
@@ -63,35 +62,44 @@ def fetch_data(api_key: str, symbol: str):
 
         for opt in chain:
             strike = opt.details.strike_price
-            iv = getattr(opt, 'implied_volatility', None)
-            
-            if iv is None or iv <= 0 or min_s > strike or strike > max_s:
+            if strike < min_s or strike > max_s:
                 continue
             
-            iv = iv / 100 if iv > 1 else iv
+            iv = None
+            if hasattr(opt, 'greeks') and opt.greeks:
+                iv = getattr(opt.greeks, 'iv', None)
+            if iv is None:
+                iv = getattr(opt, 'implied_volatility', None)
             
-            if 0.05 < iv < 0.80:
-                data.append({
-                    'expiration': opt.details.expiration_date,
-                    'strike': strike,
-                    'iv': iv,
-                    'type': opt.details.contract_type
-                })
+            if iv is None or iv <= 0:
+                continue
+            
+            if iv > 1:
+                iv = iv / 100
+            
+            if not (0.05 <= iv <= 0.80):
+                continue
 
-        if data:
-            exps = sorted(set(d['expiration'] for d in data))[:8]
-            data = [d for d in data if d['expiration'] in exps]
-            return data, spot, "live"
+            data.append({
+                'expiration': opt.details.expiration_date,
+                'strike': strike,
+                'iv': iv,
+                'type': opt.details.contract_type
+            })
 
-        return generate_demo_data(symbol)
+        if len(data) < 20:
+            return generate_demo_data(symbol)
+
+        exps = sorted(set(d['expiration'] for d in data))[:8]
+        data = [d for d in data if d['expiration'] in exps]
+        return data, spot, "live"
 
     except Exception as e:
-        st.warning(f"API error: {str(e)[:80]}")
+        st.warning(f"API error: {e}")
         return generate_demo_data(symbol)
 
 
-def generate_demo_data(symbol: str):
-    """Generate demo IV data."""
+def generate_demo_data(symbol: str) -> Tuple[List[Dict], float, str]:
     spots = {'SPY': 585.0, 'QQQ': 510.0, 'AAPL': 245.0, 'MSFT': 420.0, 'NVDA': 135.0, 'TSLA': 395.0}
     spot = spots.get(symbol, 100.0)
     data = []
@@ -103,13 +111,17 @@ def generate_demo_data(symbol: str):
         for strike in np.linspace(spot * 0.90, spot * 1.10, 25):
             log_m = np.log(strike / spot)
             iv = 0.18 - 0.15 * log_m + 0.08 * log_m**2 + 0.025 * np.sqrt(T)
-            data.append({'expiration': exp, 'strike': round(strike, 2), 'iv': max(0.08, min(0.6, iv)), 'type': 'call'})
+            data.append({
+                'expiration': exp,
+                'strike': round(strike, 2),
+                'iv': max(0.08, min(0.6, iv)),
+                'type': 'call'
+            })
 
     return data, spot, "demo"
 
 
-def create_surface(data: List[Dict], spot: float, symbol: str, source: str):
-    """Create 3D IV surface."""
+def create_surface(data: List[Dict], spot: float, symbol: str, source: str) -> go.Figure:
     df = pd.DataFrame(data)
     pivot = df.pivot_table(index='expiration', columns='strike', values='iv', aggfunc='mean')
     pivot = pivot.sort_index().sort_index(axis=1).interpolate(axis=1).interpolate(axis=0).bfill().ffill()
@@ -118,58 +130,100 @@ def create_surface(data: List[Dict], spot: float, symbol: str, source: str):
     X, Y = np.meshgrid(strikes, np.arange(len(exps)))
     Z = pivot.values * 100
 
-    hover = np.array([[f"Strike: ${strikes[j]:.2f}<br>Expiry: {exps[i]}<br>IV: {Z[i,j]:.1f}%"
-                       for j in range(len(strikes))] for i in range(len(exps))])
+    hover = np.array([[
+        f"Strike: ${strikes[j]:.2f}<br>Expiry: {exps[i]}<br>IV: {Z[i,j]:.1f}%"
+        for j in range(len(strikes))
+    ] for i in range(len(exps))])
 
     fig = go.Figure()
-    fig.add_trace(go.Surface(x=X, y=Y, z=Z, colorscale='Magma', opacity=0.95,
-        hoverinfo='text', text=hover,
-        colorbar=dict(title='IV (%)', len=0.75, thickness=15)))
+    fig.add_trace(go.Surface(
+        x=X, y=Y, z=Z,
+        colorscale='Magma',
+        opacity=0.95,
+        hoverinfo='text',
+        text=hover,
+        colorbar=dict(title='IV (%)', len=0.75, thickness=15)
+    ))
 
     spot_idx = np.abs(strikes - spot).argmin()
-    fig.add_trace(go.Scatter3d(x=[spot]*len(exps), y=list(range(len(exps))), z=Z[:, spot_idx],
-        mode='lines', line=dict(color='red', width=5), name=f'ATM (${spot:.2f})', hoverinfo='skip'))
+    fig.add_trace(go.Scatter3d(
+        x=[spot] * len(exps),
+        y=list(range(len(exps))),
+        z=Z[:, spot_idx],
+        mode='lines',
+        line=dict(color='red', width=5),
+        name=f'ATM (${spot:.2f})',
+        hoverinfo='skip'
+    ))
 
     label = '🟢 LIVE' if source == 'live' else '🟡 DEMO'
     fig.update_layout(
-        title=dict(text=f'{symbol} IV Surface<br><sup>{label} | Spot: ${spot:.2f} | {datetime.now().strftime("%H:%M:%S")}</sup>', x=0.5, font=dict(size=20, color='white')),
+        title=dict(
+            text=f'{symbol} IV Surface<br><sup>{label} | Spot: ${spot:.2f} | {datetime.now().strftime("%H:%M:%S")}</sup>',
+            x=0.5,
+            font=dict(size=20, color='white')
+        ),
         scene=dict(
             xaxis=dict(title='Strike ($)', backgroundcolor='#0e1117', gridcolor='#333', color='white'),
-            yaxis=dict(title='Expiration', backgroundcolor='#0e1117', gridcolor='#333', color='white',
-                       ticktext=[e[5:] for e in exps], tickvals=list(range(len(exps)))),
+            yaxis=dict(
+                title='Expiration',
+                backgroundcolor='#0e1117',
+                gridcolor='#333',
+                color='white',
+                ticktext=[e[5:] for e in exps],
+                tickvals=list(range(len(exps)))
+            ),
             zaxis=dict(title='IV (%)', backgroundcolor='#0e1117', gridcolor='#333', color='white'),
             camera=dict(eye=dict(x=1.5, y=-1.5, z=0.8))
         ),
-        paper_bgcolor='#0e1117', font=dict(color='white'), height=600, margin=dict(l=0, r=0, t=80, b=0),
+        paper_bgcolor='#0e1117',
+        font=dict(color='white'),
+        height=600,
+        margin=dict(l=0, r=0, t=80, b=0),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01, bgcolor='rgba(30,33,48,0.8)')
     )
     return fig
 
 
-def create_skew(data: List[Dict], spot: float):
-    """Create skew chart."""
+def create_skew(data: List[Dict], spot: float) -> go.Figure:
     df = pd.DataFrame(data)
     front = sorted(df['expiration'].unique())[0]
     skew = df[df['expiration'] == front].sort_values('strike')
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=skew['strike'], y=skew['iv']*100, mode='lines+markers',
-        line=dict(color='#00d4ff', width=3), marker=dict(size=5),
-        hovertemplate='Strike: $%{x:.2f}<br>IV: %{y:.1f}%<extra></extra>'))
-    fig.add_vline(x=spot, line_dash="dash", line_color="#ff4444", line_width=2,
-        annotation_text=f"Spot: ${spot:.2f}", annotation_position="top")
+    fig.add_trace(go.Scatter(
+        x=skew['strike'],
+        y=skew['iv'] * 100,
+        mode='lines+markers',
+        line=dict(color='#00d4ff', width=3),
+        marker=dict(size=5),
+        hovertemplate='Strike: $%{x:.2f}<br>IV: %{y:.1f}%<extra></extra>'
+    ))
+    fig.add_vline(
+        x=spot,
+        line_dash="dash",
+        line_color="#ff4444",
+        line_width=2,
+        annotation_text=f"Spot: ${spot:.2f}",
+        annotation_position="top"
+    )
 
     fig.update_layout(
-        title=dict(text=f'Front-Month Skew ({str(front)})', x=0.5, font=dict(size=16, color='white')),
-        xaxis_title='Strike ($)', yaxis_title='IV (%)',
-        paper_bgcolor='#0e1117', plot_bgcolor='#1e2130', font=dict(color='white'),
-        xaxis=dict(gridcolor='#333'), yaxis=dict(gridcolor='#333'), height=400, showlegend=False
+        title=dict(text=f'Front-Month Skew ({front})', x=0.5, font=dict(size=16, color='white')),
+        xaxis_title='Strike ($)',
+        yaxis_title='IV (%)',
+        paper_bgcolor='#0e1117',
+        plot_bgcolor='#1e2130',
+        font=dict(color='white'),
+        xaxis=dict(gridcolor='#333'),
+        yaxis=dict(gridcolor='#333'),
+        height=400,
+        showlegend=False
     )
     return fig
 
 
-def create_term(data: List[Dict], spot: float):
-    """Create term structure chart."""
+def create_term(data: List[Dict], spot: float) -> go.Figure:
     df = pd.DataFrame(data)
     atm = df[(df['strike'] >= spot * 0.99) & (df['strike'] <= spot * 1.01)]
     if atm.empty:
@@ -177,15 +231,30 @@ def create_term(data: List[Dict], spot: float):
     term = atm.groupby('expiration')['iv'].mean().sort_index() * 100
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=list(range(len(term))), y=term.values, mode='lines+markers',
-        line=dict(color='#00ff88', width=3), marker=dict(size=10),
-        hovertemplate='%{customdata}<br>IV: %{y:.1f}%<extra></extra>', customdata=term.index.tolist()))
+    fig.add_trace(go.Scatter(
+        x=list(range(len(term))),
+        y=term.values,
+        mode='lines+markers',
+        line=dict(color='#00ff88', width=3),
+        marker=dict(size=10),
+        hovertemplate='%{customdata}<br>IV: %{y:.1f}%<extra></extra>',
+        customdata=term.index.tolist()
+    ))
 
     fig.update_layout(
         title=dict(text='ATM Term Structure', x=0.5, font=dict(size=16, color='white')),
-        xaxis=dict(title='Expiration', ticktext=[e[5:] for e in term.index], tickvals=list(range(len(term))), gridcolor='#333'),
+        xaxis=dict(
+            title='Expiration',
+            ticktext=[e[5:] for e in term.index],
+            tickvals=list(range(len(term))),
+            gridcolor='#333'
+        ),
         yaxis=dict(title='IV (%)', gridcolor='#333'),
-        paper_bgcolor='#0e1117', plot_bgcolor='#1e2130', font=dict(color='white'), height=400, showlegend=False
+        paper_bgcolor='#0e1117',
+        plot_bgcolor='#1e2130',
+        font=dict(color='white'),
+        height=400,
+        showlegend=False
     )
     return fig
 
@@ -197,9 +266,9 @@ def main():
     with st.sidebar:
         st.header("⚙️ Settings")
         symbol = st.selectbox("Symbol", ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"])
-        try:
-            api_key = st.secrets["POLYGON_API_KEY"]
-        except:
+        
+        api_key = st.secrets.get("POLYGON_API_KEY", "") if hasattr(st, 'secrets') else ""
+        if not api_key:
             api_key = os.environ.get('POLYGON_API_KEY', '')
         
         if st.button("🔄 Refresh", use_container_width=True):
@@ -207,7 +276,7 @@ def main():
             st.rerun()
 
         st.markdown("---")
-        st.markdown("**About**: Visualizes IV across strikes and expirations. Observe volatility smile, skew, and term structure patterns.")
+        st.markdown("**About**: Visualizes IV across strikes and expirations.")
         st.markdown("[GitHub](https://github.com/MeilinP) | [LinkedIn](https://linkedin.com/in/meilinp123)")
 
     data, spot, source = fetch_data(api_key, symbol)
@@ -227,7 +296,11 @@ def main():
     left.plotly_chart(create_skew(data, spot), use_container_width=True)
     right.plotly_chart(create_term(data, spot), use_container_width=True)
 
-    st.markdown(f"<div style='text-align:center;color:#666;font-size:0.8rem'>Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {len(data)} contracts</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='text-align:center;color:#666;font-size:0.8rem'>"
+        f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | {len(data)} contracts</div>",
+        unsafe_allow_html=True
+    )
 
 
 if __name__ == "__main__":

@@ -25,78 +25,72 @@ class VolatilitySurface:
         self.spot_price = 0.0
         self.iv_data = []
         self.num_expirations = 6
-        self.moneyness_range = (0.95, 1.05)
-
-    def get_spot_price(self) -> float:
-        """Fetch latest close price."""
-        try:
-            aggs = list(self.client.get_aggs(
-                self.symbol, 1, "day",
-                (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
-                datetime.now().strftime('%Y-%m-%d'),
-                limit=10, sort="desc"
-            ))
-            self.spot_price = aggs[0].close if aggs else 585.0
-        except Exception as e:
-            print(f"Price error: {e}")
-            self.spot_price = 585.0
-        
-        print(f"Spot: ${self.spot_price:.2f}")
-        return self.spot_price
+        self.moneyness_range = (0.92, 1.08)
 
     def fetch_iv_data(self) -> List[Dict]:
-        """Fetch IV data from Polygon options snapshot."""
+        chain = list(self.client.list_snapshot_options_chain(self.symbol))
+        
+        if not chain:
+            print("No options data")
+            return []
+        
+        if hasattr(chain[0], 'underlying_asset') and chain[0].underlying_asset:
+            price = getattr(chain[0].underlying_asset, 'price', None)
+            if price:
+                self.spot_price = price
+        
         if not self.spot_price:
-            self.get_spot_price()
+            aggs = list(self.client.get_aggs(
+                self.symbol, 1, "minute",
+                (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'),
+                datetime.now().strftime('%Y-%m-%d'),
+                limit=1, sort="desc"
+            ))
+            self.spot_price = aggs[0].close if aggs else 585.0
+        
+        print(f"Spot: ${self.spot_price:.2f}")
 
         min_strike = self.spot_price * self.moneyness_range[0]
         max_strike = self.spot_price * self.moneyness_range[1]
         data = []
 
-        try:
-            chain = list(self.client.list_snapshot_options_chain(self.symbol))
+        for opt in chain:
+            strike = opt.details.strike_price
+            if strike < min_strike or strike > max_strike:
+                continue
             
-            if chain:
-                underlying = getattr(chain[0], 'underlying_asset', None)
-                if underlying:
-                    price = getattr(underlying, 'price', None)
-                    if price:
-                        self.spot_price = price
-                        min_strike = self.spot_price * self.moneyness_range[0]
-                        max_strike = self.spot_price * self.moneyness_range[1]
-            
-            for opt in chain:
-                strike = opt.details.strike_price
+            iv = None
+            if hasattr(opt, 'greeks') and opt.greeks:
+                iv = getattr(opt.greeks, 'iv', None)
+            if iv is None:
                 iv = getattr(opt, 'implied_volatility', None)
-                
-                if iv is None or iv <= 0 or min_strike > strike or strike > max_strike:
-                    continue
-                
-                iv = iv / 100 if iv > 1 else iv
-                
-                if 0.05 < iv < 0.80:
-                    data.append({
-                        'expiration': opt.details.expiration_date,
-                        'strike': strike,
-                        'iv': iv,
-                        'type': opt.details.contract_type
-                    })
+            
+            if iv is None or iv <= 0:
+                continue
+            
+            if iv > 1:
+                iv = iv / 100
+            
+            if not (0.05 <= iv <= 0.80):
+                continue
 
-            if data:
-                expirations = sorted(set(d['expiration'] for d in data))[:self.num_expirations]
-                data = [d for d in data if d['expiration'] in expirations]
+            data.append({
+                'expiration': opt.details.expiration_date,
+                'strike': strike,
+                'iv': iv,
+                'type': opt.details.contract_type
+            })
 
-            self.iv_data = data
-            print(f"Fetched {len(data)} contracts")
-            return data
+        if data:
+            expirations = sorted(set(d['expiration'] for d in data))[:self.num_expirations]
+            data = [d for d in data if d['expiration'] in expirations]
 
-        except Exception as e:
-            print(f"Error: {e}")
-            return []
+        self.iv_data = data
+        print(f"Fetched {len(data)} contracts")
+        return data
 
 
 def build_surface(data: List[Dict]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:
-    """Convert IV data to grid for 3D plotting."""
     df = pd.DataFrame(data)
     pivot = df.pivot_table(
         index='expiration', columns='strike', values='iv', aggfunc='mean'
@@ -109,9 +103,7 @@ def build_surface(data: List[Dict]) -> Tuple[np.ndarray, np.ndarray, np.ndarray,
 
 
 def run(api_key: str, symbol: str = 'SPY', interval: float = 2.0):
-    """Main visualization loop."""
     surface = VolatilitySurface(api_key, symbol)
-    surface.get_spot_price()
     
     plt.ion()
     fig = plt.figure(figsize=(16, 9))
@@ -133,7 +125,6 @@ def run(api_key: str, symbol: str = 'SPY', interval: float = 2.0):
     try:
         while True:
             if not locked[0]:
-                surface.get_spot_price()
                 data = surface.fetch_iv_data()
                 
                 if len(data) > 10:
