@@ -54,14 +54,27 @@ class VolatilitySurface:
         data = []
 
         try:
-            chain = self.client.list_snapshot_options_chain(self.symbol)
+            chain = list(self.client.list_snapshot_options_chain(self.symbol))
+            
+            if chain:
+                underlying = getattr(chain[0], 'underlying_asset', None)
+                if underlying:
+                    price = getattr(underlying, 'price', None)
+                    if price:
+                        self.spot_price = price
+                        min_strike = self.spot_price * self.moneyness_range[0]
+                        max_strike = self.spot_price * self.moneyness_range[1]
             
             for opt in chain:
                 strike = opt.details.strike_price
                 iv = getattr(opt, 'implied_volatility', None)
                 
-                # Filter: valid IV range (5% - 80% for SPY), within moneyness range
-                if iv and 0.05 < iv < 0.80 and min_strike <= strike <= max_strike:
+                if iv is None or iv <= 0 or min_strike > strike or strike > max_strike:
+                    continue
+                
+                iv = iv / 100 if iv > 1 else iv
+                
+                if 0.05 < iv < 0.80:
                     data.append({
                         'expiration': opt.details.expiration_date,
                         'strike': strike,

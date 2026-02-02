@@ -37,22 +37,27 @@ def fetch_data(api_key: str, symbol: str):
 
     try:
         client = RESTClient(api_key)
+        spot = None
         
-        # Get latest close price
-        try:
-            aggs = list(client.get_aggs(symbol, 1, "day",
-                (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
-                datetime.now().strftime('%Y-%m-%d'), limit=10, sort="desc"))
-            spot = aggs[0].close if aggs else None
-        except Exception as e:
-            st.warning(f"Price fetch error: {e}")
-            spot = None
+        chain = list(client.list_snapshot_options_chain(symbol))
+        
+        if chain:
+            underlying = getattr(chain[0], 'underlying_asset', None)
+            if underlying:
+                spot = getattr(underlying, 'price', None)
+        
+        if not spot:
+            try:
+                aggs = list(client.get_aggs(symbol, 1, "minute",
+                    (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'),
+                    datetime.now().strftime('%Y-%m-%d'), limit=1, sort="desc"))
+                spot = aggs[0].close if aggs else None
+            except:
+                pass
         
         if not spot:
             return generate_demo_data(symbol)
 
-        # Options chain
-        chain = client.list_snapshot_options_chain(symbol)
         min_s, max_s = spot * 0.92, spot * 1.08
         data = []
 
@@ -60,8 +65,12 @@ def fetch_data(api_key: str, symbol: str):
             strike = opt.details.strike_price
             iv = getattr(opt, 'implied_volatility', None)
             
-            # Filter: valid IV range (5% - 80% for SPY), within moneyness range
-            if iv and 0.05 < iv < 0.80 and min_s <= strike <= max_s:
+            if iv is None or iv <= 0 or min_s > strike or strike > max_s:
+                continue
+            
+            iv = iv / 100 if iv > 1 else iv
+            
+            if 0.05 < iv < 0.80:
                 data.append({
                     'expiration': opt.details.expiration_date,
                     'strike': strike,
