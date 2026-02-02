@@ -1,159 +1,90 @@
-"""
-Live Volatility Surface - Polygon.io (Matplotlib)
-"""
-
 import os
 import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Button
 from polygon import RESTClient
-
-plt.style.use('dark_background')
-
 
 class VolatilitySurface:
     def __init__(self, api_key: str, symbol: str = 'SPY'):
         self.client = RESTClient(api_key)
         self.symbol = symbol.upper()
         self.spot_price = 0.0
-        self.num_expirations = 6
-        self.moneyness_range = (0.92, 1.08)
 
-    def get_spot_price(self) -> float:
+    def update_spot_price(self) -> float:
         try:
-            aggs = list(self.client.get_aggs(
-                self.symbol, 1, "day",
-                (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
-                datetime.now().strftime('%Y-%m-%d'),
-                limit=5, sort="desc"
-            ))
-            if aggs:
-                self.spot_price = aggs[0].close
-        except Exception as e:
-            print(f"Price error: {e}")
-        
-        print(f"Spot: ${self.spot_price:.2f}")
+            # Use snapshot for real-time price
+            snapshot = self.client.get_snapshot_ticker("stocks", self.symbol)
+            if snapshot and hasattr(snapshot, 'last_trade'):
+                self.spot_price = snapshot.last_trade.price
+                return self.spot_price
+        except:
+            pass
         return self.spot_price
 
     def fetch_iv_data(self) -> List[Dict]:
-        if not self.spot_price:
-            self.get_spot_price()
-
-        min_strike = self.spot_price * self.moneyness_range[0]
-        max_strike = self.spot_price * self.moneyness_range[1]
+        self.update_spot_price()
         data = []
-
         try:
             chain = self.client.list_snapshot_options_chain(self.symbol)
-            
             for opt in chain:
                 strike = opt.details.strike_price
-                if strike < min_strike or strike > max_strike:
-                    continue
-                
                 iv = getattr(opt, 'implied_volatility', None)
-                if iv is None or iv <= 0 or iv > 0.80:
-                    continue
-
-                data.append({
-                    'expiration': opt.details.expiration_date,
-                    'strike': strike,
-                    'iv': iv,
-                    'type': opt.details.contract_type
-                })
-
-            if data:
-                expirations = sorted(set(d['expiration'] for d in data))[:self.num_expirations]
-                data = [d for d in data if d['expiration'] in expirations]
-
-            print(f"Fetched {len(data)} contracts")
-            return data
-
+                is_call = opt.details.contract_type == 'call'
+                
+                # OTM Filtering
+                is_otm = (is_call and strike >= self.spot_price) or (not is_call and strike < self.spot_price)
+                
+                if is_otm and iv and 0.01 < iv < 1.0:
+                    data.append({
+                        'expiration': opt.details.expiration_date,
+                        'strike': strike,
+                        'iv': iv
+                    })
+            
+            # Keep first 6 expirations
+            exps = sorted(set(d['expiration'] for d in data))[:6]
+            return [d for d in data if d['expiration'] in exps]
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Fetch error: {e}")
             return []
 
-
-def build_surface(data: List[Dict]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:
-    df = pd.DataFrame(data)
-    pivot = df.pivot_table(
-        index='expiration', columns='strike', values='iv', aggfunc='mean'
-    ).sort_index().sort_index(axis=1)
-    
-    pivot = pivot.interpolate(axis=0).interpolate(axis=1).bfill().ffill()
-    X, Y = np.meshgrid(pivot.columns, np.arange(len(pivot.index)))
-    
-    return X, Y, pivot.values, list(pivot.index)
-
-
-def run(api_key: str, symbol: str = 'SPY', interval: float = 2.0):
-    surface = VolatilitySurface(api_key, symbol)
-    surface.get_spot_price()
-    
+def run_live_view(api_key: str, symbol: str = 'SPY'):
+    engine = VolatilitySurface(api_key, symbol)
     plt.ion()
-    fig = plt.figure(figsize=(16, 9))
-    fig.canvas.manager.set_window_title(f'IV Surface - {symbol}')
-    fig.patch.set_facecolor('#0b0d0f')
-    
-    ax_3d = plt.subplot2grid((1, 3), (0, 0), colspan=2, projection='3d')
-    ax_skew = plt.subplot2grid((1, 3), (0, 2))
-    
-    locked = [False]
-    ax_btn = plt.axes([0.42, 0.03, 0.12, 0.04])
-    btn = Button(ax_btn, 'LOCK', color='#1f2329', hovercolor='#2d333b')
-    btn.label.set_color('white')
-    btn.on_clicked(lambda _: locked.__setitem__(0, not locked[0]) or 
-                   btn.label.set_text('UNLOCK' if locked[0] else 'LOCK'))
+    fig = plt.figure(figsize=(12, 7), facecolor='#0b0d0f')
+    ax = fig.add_subplot(111, projection='3d', facecolor='#0b0d0f')
 
-    print(f"\n{'='*50}\n  Live IV Surface - {symbol}\n  Ctrl+C to exit\n{'='*50}\n")
-
-    try:
-        while True:
-            if not locked[0]:
-                surface.get_spot_price()
-                data = surface.fetch_iv_data()
-                
-                if len(data) > 10:
-                    X, Y, Z, exps = build_surface(data)
-                    elev, azim = ax_3d.elev or 30, ax_3d.azim or -60
-
-                    ax_3d.clear()
-                    ax_3d.set_facecolor('#0b0d0f')
-                    ax_3d.plot_surface(X, Y, Z * 100, cmap='magma', edgecolor='white', lw=0.1, alpha=0.9)
-                    ax_3d.set_xlabel('Strike ($)', color='white')
-                    ax_3d.set_ylabel('Expiration', color='white')
-                    ax_3d.set_zlabel('IV (%)', color='white')
-                    ax_3d.set_yticks(range(len(exps)))
-                    ax_3d.set_yticklabels([e[5:] for e in exps], fontsize=7)
-                    ax_3d.set_title(f"IV SURFACE | {symbol} @ ${surface.spot_price:.2f} | {time.strftime('%H:%M:%S')}", color='white')
-                    ax_3d.view_init(elev, azim)
-                    ax_3d.tick_params(colors='white', labelsize=8)
-
-                    ax_skew.clear()
-                    ax_skew.set_facecolor('#161b22')
-                    df = pd.DataFrame(data)
-                    front = df[df['expiration'] == sorted(df['expiration'].unique())[0]].sort_values('strike')
-                    ax_skew.plot(front['strike'], front['iv'] * 100, 'o-', color='#00f2ff', lw=2, ms=4)
-                    ax_skew.axvline(surface.spot_price, color='#ff3e3e', ls='--', lw=2)
-                    ax_skew.set_title(f"SKEW: {sorted(df['expiration'].unique())[0]}", color='white')
-                    ax_skew.set_xlabel('Strike ($)', color='white')
-                    ax_skew.set_ylabel('IV (%)', color='white')
-                    ax_skew.tick_params(colors='white')
-                    ax_skew.grid(True, alpha=0.3)
-
-            plt.pause(interval)
-
-    except KeyboardInterrupt:
-        plt.close()
-
+    while True:
+        data = engine.fetch_iv_data()
+        if data:
+            df = pd.DataFrame(data)
+            pivot = df.pivot_table(index='expiration', columns='strike', values='iv', aggfunc='mean')
+            
+            # Smoothing and Interpolation
+            pivot = pivot.rolling(window=3, axis=1, center=True, min_periods=1).mean()
+            pivot = pivot.interpolate(method='linear', axis=1).interpolate(method='linear', axis=0).ffill().bfill()
+            
+            X, Y = np.meshgrid(pivot.columns, np.arange(len(pivot.index)))
+            Z = pivot.values * 100
+            
+            ax.clear()
+            ax.plot_surface(X, Y, Z, cmap='magma', edgecolor='none', alpha=0.9)
+            ax.set_title(f"LIVE {symbol} IV Surface | Spot: ${engine.spot_price:.2f}", color='white')
+            ax.set_zlabel("IV %", color='white')
+            ax.set_yticks(range(len(pivot.index)))
+            ax.set_yticklabels([e[5:] for e in pivot.index], color='white', fontsize=8)
+            ax.tick_params(colors='white')
+            
+            plt.draw()
+            plt.pause(5)
+        else:
+            print("Waiting for data...")
+            time.sleep(5)
 
 if __name__ == "__main__":
-    api_key = os.environ.get('POLYGON_API_KEY', '')
-    if not api_key:
-        raise ValueError("Set POLYGON_API_KEY environment variable")
-    run(api_key)
+    key = os.environ.get('POLYGON_API_KEY')
+    if not key: print("Error: Set POLYGON_API_KEY env var")
+    else: run_live_view(key)
