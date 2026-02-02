@@ -28,21 +28,18 @@ class VolatilitySurface:
         self.moneyness_range = (0.95, 1.05)
 
     def get_spot_price(self) -> float:
-        """Fetch spot price using minute bars."""
+        """Fetch latest close price."""
         try:
             aggs = list(self.client.get_aggs(
-                self.symbol, 1, "minute",
-                datetime.now() - timedelta(hours=1),
-                datetime.now(), limit=1, sort="desc"
-            ))
-            self.spot_price = aggs[0].close if aggs else 585.0
-        except:
-            aggs = list(self.client.get_aggs(
                 self.symbol, 1, "day",
-                datetime.now() - timedelta(days=5),
-                datetime.now(), limit=1, sort="desc"
+                (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
+                datetime.now().strftime('%Y-%m-%d'),
+                limit=10, sort="desc"
             ))
             self.spot_price = aggs[0].close if aggs else 585.0
+        except Exception as e:
+            print(f"Price error: {e}")
+            self.spot_price = 585.0
         
         print(f"Spot: ${self.spot_price:.2f}")
         return self.spot_price
@@ -63,7 +60,8 @@ class VolatilitySurface:
                 strike = opt.details.strike_price
                 iv = getattr(opt, 'implied_volatility', None)
                 
-                if iv and 0.01 < iv < 2.0 and min_strike <= strike <= max_strike:
+                # Filter: valid IV range (5% - 80% for SPY), within moneyness range
+                if iv and 0.05 < iv < 0.80 and min_strike <= strike <= max_strike:
                     data.append({
                         'expiration': opt.details.expiration_date,
                         'strike': strike,

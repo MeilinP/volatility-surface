@@ -38,15 +38,15 @@ def fetch_data(api_key: str, symbol: str):
     try:
         client = RESTClient(api_key)
         
-        # Real-time spot price using minute bars
+        # Get latest close price
         try:
-            aggs = list(client.get_aggs(symbol, 1, "minute",
-                datetime.now() - timedelta(hours=1), datetime.now(), limit=1, sort="desc"))
-            spot = aggs[0].close if aggs else None
-        except:
             aggs = list(client.get_aggs(symbol, 1, "day",
-                datetime.now() - timedelta(days=5), datetime.now(), limit=1, sort="desc"))
+                (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
+                datetime.now().strftime('%Y-%m-%d'), limit=10, sort="desc"))
             spot = aggs[0].close if aggs else None
+        except Exception as e:
+            st.warning(f"Price fetch error: {e}")
+            spot = None
         
         if not spot:
             return generate_demo_data(symbol)
@@ -59,7 +59,9 @@ def fetch_data(api_key: str, symbol: str):
         for opt in chain:
             strike = opt.details.strike_price
             iv = getattr(opt, 'implied_volatility', None)
-            if iv and 0.01 < iv < 2.0 and min_s <= strike <= max_s:
+            
+            # Filter: valid IV range (5% - 80% for SPY), within moneyness range
+            if iv and 0.05 < iv < 0.80 and min_s <= strike <= max_s:
                 data.append({
                     'expiration': opt.details.expiration_date,
                     'strike': strike,
@@ -149,7 +151,7 @@ def create_skew(data: List[Dict], spot: float):
         annotation_text=f"Spot: ${spot:.2f}", annotation_position="top")
 
     fig.update_layout(
-        title=dict(text=f'Front-Month Skew ({front})', x=0.5, font=dict(size=16, color='white')),
+        title=dict(text=f'Front-Month Skew ({str(front)})', x=0.5, font=dict(size=16, color='white')),
         xaxis_title='Strike ($)', yaxis_title='IV (%)',
         paper_bgcolor='#0e1117', plot_bgcolor='#1e2130', font=dict(color='white'),
         xaxis=dict(gridcolor='#333'), yaxis=dict(gridcolor='#333'), height=400, showlegend=False
