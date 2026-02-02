@@ -462,7 +462,7 @@ def main():
         
         st.markdown("---")
         st.markdown("### 🔗 Links")
-        st.markdown("[GitHub](https://github.com/meilinpan) | [LinkedIn](https://linkedin.com/in/meilinpan)")
+        st.markdown("[GitHub](https://github.com/meilinp) | [LinkedIn](https://www.linkedin.com/in/meilinp123/)")
     
     # Fetch data
     with st.spinner("Fetching options data..."):
