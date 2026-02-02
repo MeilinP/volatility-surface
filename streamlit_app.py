@@ -1,6 +1,5 @@
 """
 Live Volatility Surface - Streamlit App
-Real-time IV surface visualization with Polygon.io
 """
 
 import os
@@ -29,55 +28,67 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+def get_spot_price(client: RESTClient, symbol: str) -> Tuple[float, str]:
+    try:
+        quote = client.get_last_quote(symbol)
+        if quote and quote.ask_price and quote.bid_price:
+            return (quote.ask_price + quote.bid_price) / 2, "quote"
+    except:
+        pass
+    
+    try:
+        trade = client.get_last_trade(symbol)
+        if trade and trade.price:
+            return trade.price, "trade"
+    except:
+        pass
+    
+    try:
+        aggs = list(client.get_aggs(
+            symbol, 1, "day",
+            (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
+            datetime.now().strftime('%Y-%m-%d'),
+            limit=5, sort="desc"
+        ))
+        if aggs:
+            return aggs[0].close, "daily"
+    except:
+        pass
+    
+    return None, None
+
+
 @st.cache_data(ttl=30)
-def fetch_data(api_key: str, symbol: str) -> Tuple[List[Dict], float, str]:
+def fetch_data(api_key: str, symbol: str) -> Tuple[List[Dict], float, str, str]:
     if not POLYGON_AVAILABLE or not api_key:
-        return generate_demo_data(symbol)
+        return generate_demo_data(symbol) + ("no_api",)
 
     try:
         client = RESTClient(api_key)
-        chain = list(client.list_snapshot_options_chain(symbol))
         
-        if not chain:
-            return generate_demo_data(symbol)
-        
-        spot = None
-        if hasattr(chain[0], 'underlying_asset') and chain[0].underlying_asset:
-            spot = getattr(chain[0].underlying_asset, 'price', None)
-        
+        spot, price_source = get_spot_price(client, symbol)
         if not spot:
-            aggs = list(client.get_aggs(
-                symbol, 1, "minute",
-                (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d'),
-                datetime.now().strftime('%Y-%m-%d'),
-                limit=1, sort="desc"
-            ))
-            spot = aggs[0].close if aggs else None
-        
-        if not spot:
-            return generate_demo_data(symbol)
+            return generate_demo_data(symbol) + ("no_spot",)
 
+        chain = client.list_snapshot_options_chain(symbol)
         min_s, max_s = spot * 0.92, spot * 1.08
         data = []
+        skipped_strike = 0
+        skipped_iv = 0
 
         for opt in chain:
             strike = opt.details.strike_price
             if strike < min_s or strike > max_s:
+                skipped_strike += 1
                 continue
             
-            iv = None
-            if hasattr(opt, 'greeks') and opt.greeks:
-                iv = getattr(opt.greeks, 'iv', None)
-            if iv is None:
-                iv = getattr(opt, 'implied_volatility', None)
-            
+            iv = getattr(opt, 'implied_volatility', None)
             if iv is None or iv <= 0:
+                skipped_iv += 1
                 continue
             
-            if iv > 1:
-                iv = iv / 100
-            
-            if not (0.05 <= iv <= 0.80):
+            if iv > 0.80:
+                skipped_iv += 1
                 continue
 
             data.append({
@@ -87,16 +98,17 @@ def fetch_data(api_key: str, symbol: str) -> Tuple[List[Dict], float, str]:
                 'type': opt.details.contract_type
             })
 
+        debug = f"spot={spot:.2f}({price_source}), valid={len(data)}, skip_strike={skipped_strike}, skip_iv={skipped_iv}"
+        
         if len(data) < 20:
-            return generate_demo_data(symbol)
+            return generate_demo_data(symbol) + (debug,)
 
         exps = sorted(set(d['expiration'] for d in data))[:8]
         data = [d for d in data if d['expiration'] in exps]
-        return data, spot, "live"
+        return data, spot, "live", debug
 
     except Exception as e:
-        st.warning(f"API error: {e}")
-        return generate_demo_data(symbol)
+        return generate_demo_data(symbol) + (f"error: {e}",)
 
 
 def generate_demo_data(symbol: str) -> Tuple[List[Dict], float, str]:
@@ -267,8 +279,10 @@ def main():
         st.header("⚙️ Settings")
         symbol = st.selectbox("Symbol", ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"])
         
-        api_key = st.secrets.get("POLYGON_API_KEY", "") if hasattr(st, 'secrets') else ""
-        if not api_key:
+        api_key = ""
+        try:
+            api_key = st.secrets["POLYGON_API_KEY"]
+        except:
             api_key = os.environ.get('POLYGON_API_KEY', '')
         
         if st.button("🔄 Refresh", use_container_width=True):
@@ -279,7 +293,7 @@ def main():
         st.markdown("**About**: Visualizes IV across strikes and expirations.")
         st.markdown("[GitHub](https://github.com/MeilinP) | [LinkedIn](https://linkedin.com/in/meilinp123)")
 
-    data, spot, source = fetch_data(api_key, symbol)
+    data, spot, source, debug = fetch_data(api_key, symbol)
     df = pd.DataFrame(data)
     atm_iv = df[(df['strike'] >= spot * 0.99) & (df['strike'] <= spot * 1.01)]['iv'].mean() * 100
 
@@ -288,6 +302,8 @@ def main():
     c2.metric("Spot Price", f"${spot:.2f}")
     c3.metric("ATM IV", f"{atm_iv:.1f}%")
     c4.metric("Data Source", "🟢 Live" if source == "live" else "🟡 Demo")
+    
+    st.caption(f"Debug: {debug}")
 
     st.markdown("---")
     st.plotly_chart(create_surface(data, spot, symbol, source), use_container_width=True)
