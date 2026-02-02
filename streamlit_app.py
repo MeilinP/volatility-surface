@@ -38,18 +38,15 @@ def fetch_data(api_key: str, symbol: str):
     try:
         client = RESTClient(api_key)
         
-        # Real-time spot price
+        # Real-time spot price using minute bars
         try:
-            quote = client.get_last_quote(symbol)
-            spot = (quote.bid_price + quote.ask_price) / 2
+            aggs = list(client.get_aggs(symbol, 1, "minute",
+                datetime.now() - timedelta(hours=1), datetime.now(), limit=1, sort="desc"))
+            spot = aggs[0].close if aggs else None
         except:
-            try:
-                trade = client.get_last_trade(symbol)
-                spot = trade.price
-            except:
-                aggs = list(client.get_aggs(symbol, 1, "minute",
-                    datetime.now() - timedelta(hours=1), datetime.now(), limit=1, sort="desc"))
-                spot = aggs[0].close if aggs else None
+            aggs = list(client.get_aggs(symbol, 1, "day",
+                datetime.now() - timedelta(days=5), datetime.now(), limit=1, sort="desc"))
+            spot = aggs[0].close if aggs else None
         
         if not spot:
             return generate_demo_data(symbol)
