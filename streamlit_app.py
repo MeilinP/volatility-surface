@@ -108,7 +108,8 @@ def create_surface(data: List[Dict], spot: float, symbol: str, source: str) -> g
     pivot = df.pivot_table(index='expiration', columns='strike', values='iv', aggfunc='mean')
     
     # SMOOTHING: Rolling mean to remove random market noise spikes
-    pivot = pivot.rolling(window=3, axis=1, center=True, min_periods=1).mean()
+    # Updated to avoid the deprecation warning
+    pivot = pivot.T.rolling(window=3, center=True, min_periods=1).mean().T
     
     # INTERPOLATION: Cubic for the smooth professional look
     pivot = pivot.sort_index().sort_index(axis=1)
