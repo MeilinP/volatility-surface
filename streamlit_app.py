@@ -211,6 +211,16 @@ def create_3d_surface(data: List[Dict], spot_price: float, symbol: str, data_sou
     X, Y = np.meshgrid(strikes, np.arange(len(expirations)))
     Z = pivot.values * 100  # Convert to percentage
     
+    # Create pre-built hover text for each point
+    hover_text = []
+    for i, exp in enumerate(expirations):
+        row = []
+        for j, strike in enumerate(strikes):
+            iv_val = Z[i, j]
+            row.append(f"<b>Strike:</b> ${strike:.2f}<br><b>Expiry:</b> {exp}<br><b>IV:</b> {iv_val:.1f}%")
+        hover_text.append(row)
+    hover_text = np.array(hover_text)
+    
     # Create figure
     fig = go.Figure()
     
@@ -227,12 +237,8 @@ def create_3d_surface(data: List[Dict], spot_price: float, symbol: str, data_sou
             len=0.75,
             thickness=15
         ),
-        hovertemplate=(
-            '<b>Strike:</b> $%{x:.2f}<br>'
-            '<b>Expiry:</b> %{text}<br>'
-            '<b>IV:</b> %{z:.1f}%<extra></extra>'
-        ),
-        text=np.array([[expirations[j] for _ in range(len(strikes))] for j in range(len(expirations))])
+        hoverinfo='text',
+        text=hover_text
     ))
     
     # Add spot price line on surface
