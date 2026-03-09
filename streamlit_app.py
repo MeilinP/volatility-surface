@@ -30,52 +30,34 @@ st.markdown("""
 
 
 @st.cache_data(ttl=30)
-def fetch_data(api_key: str, symbol: str):
-    """Fetch spot price and IV data from Polygon."""
-    if not POLYGON_AVAILABLE or not api_key:
+def fetch_data(symbol: str):
+    import yfinance as yf
+    ticker = yf.Ticker(symbol)
+    
+    hist = ticker.history(period="1d")
+    if hist.empty:
+        return generate_demo_data(symbol)
+    spot = hist['Close'].iloc[-1]
+
+    expirations = ticker.options[:8]
+    if not expirations:
         return generate_demo_data(symbol)
 
-    try:
-        client = RESTClient(api_key)
-        
-        # Get latest price from yfinance
-        import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="1d")
-        spot = hist['Close'].iloc[-1] if not hist.empty else None
-        
-        if not spot:
-            return generate_demo_data(symbol)
+    data = []
+    for exp in expirations:
+        try:
+            chain = ticker.option_chain(exp)
+            for _, row in chain.calls.iterrows():
+                iv = row.get('impliedVolatility', None)
+                strike = row.get('strike', None)
+                if iv and strike and 0.05 < iv < 0.80 and spot * 0.92 <= strike <= spot * 1.08:
+                    data.append({'expiration': exp, 'strike': strike, 'iv': iv, 'type': 'call'})
+        except:
+            continue
 
-        # Options chain
-        chain = client.list_snapshot_options_chain(symbol)
-        min_s, max_s = spot * 0.92, spot * 1.08
-        data = []
-
-        for opt in chain:
-            strike = opt.details.strike_price
-            iv = getattr(opt, 'implied_volatility', None)
-            
-            # Filter: valid IV range (5% - 80% for SPY), within moneyness range
-            if iv and 0.05 < iv < 0.80 and min_s <= strike <= max_s:
-                data.append({
-                    'expiration': opt.details.expiration_date,
-                    'strike': strike,
-                    'iv': iv,
-                    'type': opt.details.contract_type
-                })
-
-        if data:
-            exps = sorted(set(d['expiration'] for d in data))[:8]
-            data = [d for d in data if d['expiration'] in exps]
-            return data, spot, "live"
-
-        return generate_demo_data(symbol)
-
-    except Exception as e:
-        st.warning(f"API error: {str(e)[:80]}")
-        return generate_demo_data(symbol)
-
+    if len(data) > 10:
+        return data, spot, "live"
+    return generate_demo_data(symbol)
 
 def generate_demo_data(symbol: str):
     """Generate demo IV data."""
@@ -195,11 +177,6 @@ def main():
     with st.sidebar:
         st.header("⚙️ Settings")
         symbol = st.selectbox("Symbol", ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"])
-        try:
-            api_key = st.secrets["POLYGON_API_KEY"]
-        except:
-            api_key = os.environ.get('POLYGON_API_KEY', '')
-        
         if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -208,7 +185,7 @@ def main():
         st.markdown("**About**: Visualizes IV across strikes and expirations. Observe volatility smile, skew, and term structure patterns.")
         st.markdown("[GitHub](https://github.com/MeilinP) | [LinkedIn](https://linkedin.com/in/meilinp123)")
 
-    data, spot, source = fetch_data(api_key, symbol)
+    data, spot, source = fetch_data(symbol)
     df = pd.DataFrame(data)
     atm_iv = df[(df['strike'] >= spot * 0.99) & (df['strike'] <= spot * 1.01)]['iv'].mean() * 100
 
