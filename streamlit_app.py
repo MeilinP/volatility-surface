@@ -29,35 +29,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=300)
 def fetch_data(symbol: str):
-    import yfinance as yf
-    ticker = yf.Ticker(symbol)
-    
-    hist = ticker.history(period="1d")
-    if hist.empty:
-        return generate_demo_data(symbol)
-    spot = hist['Close'].iloc[-1]
-
-    expirations = ticker.options[:8]
-    if not expirations:
-        return generate_demo_data(symbol)
-
-    data = []
-    for exp in expirations:
-        try:
-            chain = ticker.option_chain(exp)
-            for _, row in chain.calls.iterrows():
-                iv = row.get('impliedVolatility', None)
-                strike = row.get('strike', None)
-                if iv and strike and 0.05 < iv < 0.80 and spot * 0.92 <= strike <= spot * 1.08:
-                    data.append({'expiration': exp, 'strike': strike, 'iv': iv, 'type': 'call'})
-        except:
-            continue
-
-    if len(data) > 10:
-        return data, spot, "live"
     return generate_demo_data(symbol)
+    
 
 def generate_demo_data(symbol: str):
     """Generate demo IV data."""
