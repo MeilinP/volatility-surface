@@ -123,25 +123,28 @@ def _synthetic_fallback(spot: float):
     return data, "demo"
 
 
-@st.cache_data(ttl=300)
 def fetch_data(symbol: str):
     import yfinance as yf
 
     ticker = yf.Ticker(symbol)
 
     spot = None
+    spot_error = None
     try:
         hist = ticker.history(period="5d")
         if not hist.empty:
             spot = float(hist['Close'].iloc[-1])
-    except Exception:
-        pass
+    except Exception as e:
+        spot_error = str(e)
     if not spot:
         spot = SPOT_PRICES.get(symbol, 100.0)
 
     data = []
+    options_error = None
     try:
         expirations = ticker.options[:8]
+        if not expirations:
+            raise ValueError("ticker.options returned empty list")
         today = datetime.now()
 
         for exp in expirations:
@@ -152,14 +155,12 @@ def fetch_data(symbol: str):
 
             chain = ticker.option_chain(exp)
             for _, row in chain.calls.iterrows():
-                strike = row.get('strike')
-                iv = row.get('impliedVolatility')
-                volume = row.get('volume') or 0
-                oi = row.get('openInterest') or 0
-                if not (iv and strike):
+                strike = row['strike']
+                iv = row['impliedVolatility']
+                if not (iv and strike and not np.isnan(iv)):
                     continue
                 moneyness = strike / spot
-                if 0.02 < iv < 2.0 and 0.75 <= moneyness <= 1.25 and (volume > 0 or oi > 0):
+                if 0.02 < iv < 2.0 and 0.75 <= moneyness <= 1.25:
                     data.append({
                         'expiration': exp,
                         'strike': float(strike),
@@ -169,12 +170,12 @@ def fetch_data(symbol: str):
                     })
 
         if len(data) > 20:
-            return data, spot, "live"
-    except Exception:
-        pass
+            return data, spot, "live", None
+    except Exception as e:
+        options_error = str(e)
 
     data, source = _synthetic_fallback(spot)
-    return data, spot, source
+    return data, spot, source, options_error or spot_error or "options fetch returned 0 rows"
 
 
 def create_surface(data, spot, symbol, source):
@@ -343,7 +344,7 @@ def main():
         st.markdown("")
         st.caption("[GitHub](https://github.com/MeilinP) · [LinkedIn](https://linkedin.com/in/meilinp123)")
 
-    data, spot, source = fetch_data(symbol)
+    data, spot, source, fetch_error = fetch_data(symbol)
     df = pd.DataFrame(data)
     atm_iv = df[(df['strike'] >= spot * 0.99) & (df['strike'] <= spot * 1.01)]['iv'].mean() * 100
     put_skew = (
@@ -360,6 +361,8 @@ def main():
         st.caption(f"✦ Live market data via yfinance · {len(data)} contracts")
     else:
         st.caption("⚠ Live data unavailable · showing synthetic surface")
+        if fetch_error:
+            st.sidebar.error(f"yfinance error:\n{fetch_error}")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.plotly_chart(create_surface(data, spot, symbol, source), use_container_width=True)
