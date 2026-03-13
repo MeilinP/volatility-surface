@@ -175,11 +175,25 @@ def fetch_data(symbol: str):
             raise ValueError("ticker.options is empty")
 
         today = datetime.now()
-        for exp in expirations[:10]:
+
+        # Pick expirations spread across time instead of sequential
+        target_dtes = [7, 14, 30, 45, 60, 90, 120, 180]
+        seen = set()
+        selected = []
+        for target in target_dtes:
+            best = min(
+                expirations,
+                key=lambda e: abs((datetime.strptime(e, '%Y-%m-%d') - today).days - target)
+            )
+            best_dte = (datetime.strptime(best, '%Y-%m-%d') - today).days
+            if best_dte >= 5 and best not in seen:
+                seen.add(best)
+                selected.append(best)
+        debug.append(f"selected expirations: {selected}")
+
+        for exp in selected:
             exp_dt = datetime.strptime(exp, '%Y-%m-%d')
             dte = (exp_dt - today).days
-            if dte < 7:
-                continue
             T = dte / 365.0
             chain = ticker.option_chain(exp)
             debug.append(f"  {exp} (dte={dte}): {len(chain.calls)} calls, {len(chain.puts)} puts")
