@@ -150,10 +150,10 @@ def fetch_data(symbol: str):
             raise ValueError("ticker.options is empty")
 
         today = datetime.now()
-        for exp in expirations[:8]:
+        for exp in expirations[:10]:
             exp_dt = datetime.strptime(exp, '%Y-%m-%d')
             dte = (exp_dt - today).days
-            if dte < 3:
+            if dte < 7:
                 continue
             chain = ticker.option_chain(exp)
             calls = chain.calls
@@ -161,10 +161,16 @@ def fetch_data(symbol: str):
             for _, row in calls.iterrows():
                 strike = row['strike']
                 iv = row['impliedVolatility']
+                volume = row.get('volume') or 0
+                oi = row.get('openInterest') or 0
+                last = row.get('lastPrice') or 0
                 if not strike or not iv or np.isnan(iv):
                     continue
                 moneyness = strike / spot
-                if 0.02 < iv < 2.0 and 0.75 <= moneyness <= 1.25:
+                if (0.05 < iv < 0.80
+                        and 0.80 <= moneyness <= 1.20
+                        and last > 0.05
+                        and (volume > 0 or oi > 50)):
                     data.append({
                         'expiration': exp,
                         'strike': float(strike),
