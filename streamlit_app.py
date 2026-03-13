@@ -126,38 +126,42 @@ def _synthetic_fallback(spot: float):
 def fetch_data(symbol: str):
     import yfinance as yf
 
+    debug = []
     ticker = yf.Ticker(symbol)
 
     spot = None
-    spot_error = None
     try:
         hist = ticker.history(period="5d")
+        debug.append(f"history rows: {len(hist)}")
         if not hist.empty:
             spot = float(hist['Close'].iloc[-1])
+            debug.append(f"spot: {spot}")
     except Exception as e:
-        spot_error = str(e)
+        debug.append(f"history error: {e}")
     if not spot:
         spot = SPOT_PRICES.get(symbol, 100.0)
+        debug.append(f"spot fallback: {spot}")
 
     data = []
-    options_error = None
     try:
-        expirations = ticker.options[:8]
+        expirations = ticker.options
+        debug.append(f"expirations found: {len(expirations)} → {list(expirations[:3])}")
         if not expirations:
-            raise ValueError("ticker.options returned empty list")
-        today = datetime.now()
+            raise ValueError("ticker.options is empty")
 
-        for exp in expirations:
+        today = datetime.now()
+        for exp in expirations[:8]:
             exp_dt = datetime.strptime(exp, '%Y-%m-%d')
             dte = (exp_dt - today).days
             if dte < 3:
                 continue
-
             chain = ticker.option_chain(exp)
-            for _, row in chain.calls.iterrows():
+            calls = chain.calls
+            debug.append(f"  {exp}: {len(calls)} calls, IV nulls={calls['impliedVolatility'].isna().sum()}")
+            for _, row in calls.iterrows():
                 strike = row['strike']
                 iv = row['impliedVolatility']
-                if not (iv and strike and not np.isnan(iv)):
+                if not strike or not iv or np.isnan(iv):
                     continue
                 moneyness = strike / spot
                 if 0.02 < iv < 2.0 and 0.75 <= moneyness <= 1.25:
@@ -169,13 +173,14 @@ def fetch_data(symbol: str):
                         'dte': dte
                     })
 
+        debug.append(f"valid data points: {len(data)}")
         if len(data) > 20:
-            return data, spot, "live", None
+            return data, spot, "live", "\n".join(debug)
     except Exception as e:
-        options_error = str(e)
+        debug.append(f"options error: {e}")
 
     data, source = _synthetic_fallback(spot)
-    return data, spot, source, options_error or spot_error or "options fetch returned 0 rows"
+    return data, spot, source, "\n".join(debug)
 
 
 def create_surface(data, spot, symbol, source):
@@ -362,7 +367,7 @@ def main():
     else:
         st.caption("⚠ Live data unavailable · showing synthetic surface")
         if fetch_error:
-            st.sidebar.error(f"yfinance error:\n{fetch_error}")
+            st.sidebar.code(fetch_error, language=None)
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.plotly_chart(create_surface(data, spot, symbol, source), use_container_width=True)
