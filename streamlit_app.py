@@ -103,19 +103,18 @@ SPOT_PRICES = {
 
 
 def _synthetic_fallback(spot: float):
-    # Calibrated to match real equity skew (SPY-like):
-    # - ATM 7d ~18%, 180d ~14%
-    # - Deep OTM puts (75% moneyness) 7d ~50%, 180d ~28%
-    # - OTM calls (125% moneyness) 7d ~13%, 180d ~12%
+    # Calibrated for correct U-shaped smile with equity skew:
+    # 7d:   ATM=18%, OTM put (75%)=50%, OTM call (125%)=20%  → skew=-0.434, smile=2.34
+    # 180d: ATM=14%, OTM put (75%)=28%, OTM call (125%)=15%  → skew=-0.187, smile=1.04
     rng = np.random.default_rng(42)
     data = []
     today = datetime.now()
     for days in [7, 14, 21, 30, 45, 60, 90, 120, 180]:
         exp = (today + timedelta(days=days)).strftime('%Y-%m-%d')
         decay   = np.exp(-days / 30.0)
-        atm_vol = 0.14 + 0.04 * decay        # 18% short, 14% long
-        skew    = -0.26 - 0.43 * decay       # -0.69 short, -0.26 long
-        smile   =  0.77 + 1.30 * decay       # 2.07 short, 0.77 long
+        atm_vol = 0.14 + 0.05 * decay
+        skew    = -0.187 - 0.311 * decay
+        smile   =  1.037 + 1.640 * decay
         for strike in np.linspace(spot * 0.75, spot * 1.25, 40):
             m = np.log(strike / spot)
             iv = float(np.clip(atm_vol + skew * m + smile * m ** 2 + rng.normal(0, 0.003), 0.04, 1.0))
@@ -366,8 +365,8 @@ def main():
         st.caption(f"✦ Live market data via yfinance · {len(data)} contracts")
     else:
         st.caption("⚠ Live data unavailable · showing synthetic surface")
-        if fetch_error:
-            st.sidebar.code(fetch_error, language=None)
+        with st.expander("yfinance debug log"):
+            st.code(fetch_error, language=None)
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.plotly_chart(create_surface(data, spot, symbol, source), use_container_width=True)
