@@ -122,11 +122,18 @@ def _synthetic_fallback(spot: float):
     return data, "demo"
 
 
+@st.cache_data(ttl=300)
 def fetch_data(symbol: str):
+    import requests
     import yfinance as yf
 
     debug = []
-    ticker = yf.Ticker(symbol)
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    })
+    ticker = yf.Ticker(symbol, session=session)
 
     spot = None
     try:
