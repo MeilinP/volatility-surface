@@ -8,6 +8,31 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from datetime import datetime, timedelta
+from scipy.stats import norm
+from scipy.optimize import brentq
+
+
+def _bs_price(S, K, T, r, sigma, option_type='call'):
+    if T <= 0 or sigma <= 0:
+        return max(S - K, 0) if option_type == 'call' else max(K - S, 0)
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    if option_type == 'call':
+        return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+    return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+
+
+def _calc_iv(price, S, K, T, r=0.045, option_type='call'):
+    if T <= 0 or price <= 0:
+        return np.nan
+    intrinsic = max(S - K, 0) if option_type == 'call' else max(K - S, 0)
+    if price <= intrinsic:
+        return np.nan
+    try:
+        return brentq(lambda s: _bs_price(S, K, T, r, s, option_type) - price,
+                      0.001, 5.0, xtol=1e-5)
+    except Exception:
+        return np.nan
 
 st.set_page_config(page_title="IV Surface", page_icon="📈", layout="wide")
 
@@ -155,29 +180,40 @@ def fetch_data(symbol: str):
             dte = (exp_dt - today).days
             if dte < 7:
                 continue
+            T = dte / 365.0
             chain = ticker.option_chain(exp)
             calls = chain.calls
-            debug.append(f"  {exp}: {len(calls)} calls, IV nulls={calls['impliedVolatility'].isna().sum()}")
+            debug.append(f"  {exp} (dte={dte}): {len(calls)} calls")
             for _, row in calls.iterrows():
-                strike = row['strike']
-                iv = row['impliedVolatility']
-                volume = row.get('volume') or 0
-                oi = row.get('openInterest') or 0
-                last = row.get('lastPrice') or 0
-                if not strike or not iv or np.isnan(iv):
+                strike = float(row['strike'])
+                bid = float(row['bid']) if row['bid'] and not np.isnan(row['bid']) else 0
+                ask = float(row['ask']) if row['ask'] and not np.isnan(row['ask']) else 0
+                last = float(row['lastPrice']) if row['lastPrice'] and not np.isnan(row['lastPrice']) else 0
+                oi = int(row['openInterest']) if row['openInterest'] and not np.isnan(row['openInterest']) else 0
+
+                # Use bid/ask midpoint; fall back to lastPrice
+                if bid > 0 and ask > 0:
+                    price = (bid + ask) / 2
+                elif last > 0:
+                    price = last
+                else:
                     continue
+
                 moneyness = strike / spot
-                if (0.05 < iv < 0.80
-                        and 0.80 <= moneyness <= 1.20
-                        and last > 0.05
-                        and (volume > 0 or oi > 50)):
-                    data.append({
-                        'expiration': exp,
-                        'strike': float(strike),
-                        'iv': float(iv),
-                        'type': 'call',
-                        'dte': dte
-                    })
+                if not (0.80 <= moneyness <= 1.20 and price > 0.05 and oi > 10):
+                    continue
+
+                iv = _calc_iv(price, spot, strike, T)
+                if iv is np.nan or np.isnan(iv) or not (0.03 < iv < 1.50):
+                    continue
+
+                data.append({
+                    'expiration': exp,
+                    'strike': strike,
+                    'iv': iv,
+                    'type': 'call',
+                    'dte': dte
+                })
 
         debug.append(f"valid data points: {len(data)}")
         if len(data) > 20:
