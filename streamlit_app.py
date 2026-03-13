@@ -102,8 +102,8 @@ def create_surface(data: List[Dict], spot: float, symbol: str) -> go.Figure:
         colorbar=dict(title=dict(text='IV %', font=dict(color='white')),
                       thickness=15, len=0.5,
                       tickfont=dict(color='white')),
-        hovertemplate='Strike: $%{x:.0f}<br>Expiry: %{text}<br>IV: %{z:.1f}%<extra></extra>',
-        text=[[exps[i] for _ in strikes] for i in range(len(exps))]
+        hovertemplate='Strike: $%{x:.0f}<br>Expiry: %{customdata}<br>IV: %{z:.1f}%<extra></extra>',
+        customdata=[[exps[i] for _ in strikes] for i in range(len(exps))]
     )])
     fig.update_layout(
         title=f"{symbol} Live Volatility Surface",
