@@ -35,30 +35,33 @@ def fetch_data(symbol: str):
     
 
 def generate_demo_data(symbol: str):
-    """Generate demo IV data."""
-    # Try to get real spot price from yfinance
     try:
         import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="1d")
-        spot = hist['Close'].iloc[-1] if not hist.empty else None
+        hist = yf.Ticker(symbol).history(period="1d")
+        spot = float(hist['Close'].iloc[-1]) if not hist.empty else None
     except:
         spot = None
-    
+
     if not spot:
         spots = {'SPY': 600.0, 'QQQ': 520.0, 'AAPL': 230.0, 'MSFT': 420.0, 'NVDA': 130.0, 'TSLA': 400.0}
         spot = spots.get(symbol, 100.0)
-    
+
     data = []
     today = datetime.now()
 
-    for days in [7, 14, 21, 30, 45, 60, 90]:
+    for days in [7, 14, 21, 30, 45, 60, 90, 120]:
         exp = (today + timedelta(days=days)).strftime('%Y-%m-%d')
         T = days / 365.0
-        for strike in np.linspace(spot * 0.90, spot * 1.10, 25):
+        atm_vol = 0.16 + 0.04 * np.exp(-days / 60)  # term structure: short end higher
+        for strike in np.linspace(spot * 0.80, spot * 1.20, 30):
             log_m = np.log(strike / spot)
-            iv = 0.18 - 0.15 * log_m + 0.08 * log_m**2 + 0.025 * np.sqrt(T)
-            data.append({'expiration': exp, 'strike': round(strike, 2), 'iv': max(0.08, min(0.6, iv)), 'type': 'call'})
+            # Realistic skew: OTM puts expensive, OTM calls cheaper
+            skew   = -0.25 * log_m          # negative skew slope
+            smile  =  0.15 * log_m ** 2     # smile curvature
+            noise  =  np.random.normal(0, 0.003)
+            iv = atm_vol + skew + smile + noise
+            iv = max(0.05, min(0.80, iv))
+            data.append({'expiration': exp, 'strike': round(strike, 2), 'iv': iv, 'type': 'call'})
 
     return data, spot, "demo"
 
