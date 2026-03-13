@@ -102,12 +102,29 @@ SPOT_PRICES = {
 }
 
 
+def _synthetic_fallback(spot: float):
+    rng = np.random.default_rng(42)
+    data = []
+    today = datetime.now()
+    for days in [7, 14, 21, 30, 45, 60, 90, 120, 180]:
+        exp = (today + timedelta(days=days)).strftime('%Y-%m-%d')
+        atm_vol = 0.13 + 0.08 * np.exp(-days / 40.0)
+        for strike in np.linspace(spot * 0.75, spot * 1.25, 40):
+            m = np.log(strike / spot)
+            iv = float(np.clip(atm_vol - 0.20 * m + 0.90 * m ** 2 + rng.normal(0, 0.002), 0.04, 0.95))
+            data.append({'expiration': exp, 'strike': round(strike, 2), 'iv': iv, 'type': 'call'})
+    return data, "demo"
+
+
 @st.cache_data(ttl=300)
 def fetch_data(symbol: str):
+    import yfinance as yf
+
+    ticker = yf.Ticker(symbol)
+
     spot = None
     try:
-        import yfinance as yf
-        hist = yf.Ticker(symbol).history(period="5d")
+        hist = ticker.history(period="5d")
         if not hist.empty:
             spot = float(hist['Close'].iloc[-1])
     except Exception:
@@ -115,29 +132,42 @@ def fetch_data(symbol: str):
     if not spot:
         spot = SPOT_PRICES.get(symbol, 100.0)
 
-    rng = np.random.default_rng(42)
     data = []
-    today = datetime.now()
+    try:
+        expirations = ticker.options[:8]
+        today = datetime.now()
 
-    for days in [7, 14, 21, 30, 45, 60, 90, 120, 180]:
-        exp = (today + timedelta(days=days)).strftime('%Y-%m-%d')
-        T = days / 365.0
-        atm_vol = 0.13 + 0.08 * np.exp(-days / 40.0)
+        for exp in expirations:
+            exp_dt = datetime.strptime(exp, '%Y-%m-%d')
+            dte = (exp_dt - today).days
+            if dte < 3:
+                continue
 
-        for strike in np.linspace(spot * 0.75, spot * 1.25, 40):
-            m = np.log(strike / spot)
-            skew  = -0.20 * m
-            smile =  0.90 * m ** 2
-            noise = rng.normal(0, 0.0015)
-            iv = float(np.clip(atm_vol + skew + smile + noise, 0.04, 0.95))
-            data.append({
-                'expiration': exp,
-                'strike': round(strike, 2),
-                'iv': iv,
-                'type': 'call'
-            })
+            chain = ticker.option_chain(exp)
+            for _, row in chain.calls.iterrows():
+                strike = row.get('strike')
+                iv = row.get('impliedVolatility')
+                volume = row.get('volume') or 0
+                oi = row.get('openInterest') or 0
+                if not (iv and strike):
+                    continue
+                moneyness = strike / spot
+                if 0.02 < iv < 2.0 and 0.75 <= moneyness <= 1.25 and (volume > 0 or oi > 0):
+                    data.append({
+                        'expiration': exp,
+                        'strike': float(strike),
+                        'iv': float(iv),
+                        'type': 'call',
+                        'dte': dte
+                    })
 
-    return data, spot, "demo"
+        if len(data) > 20:
+            return data, spot, "live"
+    except Exception:
+        pass
+
+    data, source = _synthetic_fallback(spot)
+    return data, spot, source
 
 
 def create_surface(data, spot, symbol, source):
@@ -164,7 +194,7 @@ def create_surface(data, spot, symbol, source):
     fig = go.Figure()
     fig.add_trace(go.Surface(
         x=X, y=Y, z=Z,
-        colorscale='Blues', opacity=0.92,
+        colorscale='Plasma', opacity=0.92,
         hoverinfo='text', text=hover,
         colorbar=dict(
             title=dict(text='IV (%)', font=dict(color='#8ba8c8', size=12)),
@@ -319,6 +349,10 @@ def main():
     c2.metric("Spot", f"${spot:.2f}")
     c3.metric("ATM IV", f"{atm_iv:.1f}%")
     c4.metric("25Δ Put Skew", f"{put_skew:+.1f}%")
+    if source == "live":
+        st.caption(f"✦ Live market data via yfinance · {len(data)} contracts")
+    else:
+        st.caption("⚠ Live data unavailable · showing synthetic surface")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.plotly_chart(create_surface(data, spot, symbol, source), use_container_width=True)
