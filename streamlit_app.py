@@ -108,8 +108,9 @@ def create_surface(data: List[Dict], spot: float, symbol: str) -> go.Figure:
         colorbar=dict(title=dict(text='IV %', font=dict(color='white')),
                       thickness=15, len=0.5,
                       tickfont=dict(color='white')),
-        hovertemplate='%{text}<extra></extra>',
-        text=hover_text
+        hoverinfo='text',
+        text=hover_text,
+        name=''
     )])
     fig.update_layout(
         title=f"{symbol} Live Volatility Surface",
