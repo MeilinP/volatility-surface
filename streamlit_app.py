@@ -186,25 +186,23 @@ def fetch_data(symbol: str):
             debug.append(f"  {exp} (dte={dte}): {len(calls)} calls")
             for _, row in calls.iterrows():
                 strike = float(row['strike'])
-                bid = float(row['bid']) if row['bid'] and not np.isnan(row['bid']) else 0
-                ask = float(row['ask']) if row['ask'] and not np.isnan(row['ask']) else 0
-                last = float(row['lastPrice']) if row['lastPrice'] and not np.isnan(row['lastPrice']) else 0
-                oi = int(row['openInterest']) if row['openInterest'] and not np.isnan(row['openInterest']) else 0
+                bid  = float(row['bid'])       if pd.notna(row['bid'])        else 0.0
+                ask  = float(row['ask'])       if pd.notna(row['ask'])        else 0.0
+                last = float(row['lastPrice']) if pd.notna(row['lastPrice'])  else 0.0
 
-                # Use bid/ask midpoint; fall back to lastPrice
                 if bid > 0 and ask > 0:
-                    price = (bid + ask) / 2
+                    price = (bid + ask) / 2.0
                 elif last > 0:
                     price = last
                 else:
                     continue
 
                 moneyness = strike / spot
-                if not (0.80 <= moneyness <= 1.20 and price > 0.05 and oi > 10):
+                if not (0.80 <= moneyness <= 1.20 and price > 0.01):
                     continue
 
                 iv = _calc_iv(price, spot, strike, T)
-                if iv is np.nan or np.isnan(iv) or not (0.03 < iv < 1.50):
+                if np.isnan(iv) or not (0.03 < iv < 2.0):
                     continue
 
                 data.append({
