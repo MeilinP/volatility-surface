@@ -103,15 +103,22 @@ SPOT_PRICES = {
 
 
 def _synthetic_fallback(spot: float):
+    # Calibrated to match real equity skew (SPY-like):
+    # - ATM 7d ~18%, 180d ~14%
+    # - Deep OTM puts (75% moneyness) 7d ~50%, 180d ~28%
+    # - OTM calls (125% moneyness) 7d ~13%, 180d ~12%
     rng = np.random.default_rng(42)
     data = []
     today = datetime.now()
     for days in [7, 14, 21, 30, 45, 60, 90, 120, 180]:
         exp = (today + timedelta(days=days)).strftime('%Y-%m-%d')
-        atm_vol = 0.13 + 0.08 * np.exp(-days / 40.0)
+        decay   = np.exp(-days / 30.0)
+        atm_vol = 0.14 + 0.04 * decay        # 18% short, 14% long
+        skew    = -0.26 - 0.43 * decay       # -0.69 short, -0.26 long
+        smile   =  0.77 + 1.30 * decay       # 2.07 short, 0.77 long
         for strike in np.linspace(spot * 0.75, spot * 1.25, 40):
             m = np.log(strike / spot)
-            iv = float(np.clip(atm_vol - 0.20 * m + 0.90 * m ** 2 + rng.normal(0, 0.002), 0.04, 0.95))
+            iv = float(np.clip(atm_vol + skew * m + smile * m ** 2 + rng.normal(0, 0.003), 0.04, 1.0))
             data.append({'expiration': exp, 'strike': round(strike, 2), 'iv': iv, 'type': 'call'})
     return data, "demo"
 
