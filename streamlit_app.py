@@ -9,13 +9,90 @@ import plotly.graph_objects as go
 import streamlit as st
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="IV Surface", page_icon="📊", layout="wide")
+st.set_page_config(page_title="IV Surface", page_icon="📈", layout="wide")
 
 st.markdown("""
 <style>
-    .stApp { background-color: #0e1117; }
-    .main-header { font-size: 2.5rem; font-weight: 700; color: #fff; text-align: center; }
-    .sub-header { font-size: 1rem; color: #888; text-align: center; margin-bottom: 2rem; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    .stApp { background-color: #080c14; }
+
+    .header-wrapper {
+        background: linear-gradient(135deg, #0d1b2a 0%, #112240 60%, #0d1b2a 100%);
+        border: 1px solid #1e3a5f;
+        border-radius: 16px;
+        padding: 36px 40px 28px;
+        margin-bottom: 28px;
+        text-align: center;
+    }
+    .header-title {
+        font-size: 2.4rem;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        background: linear-gradient(90deg, #7eb8f7, #a78bfa, #7eb8f7);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin: 0 0 8px 0;
+    }
+    .header-sub {
+        font-size: 0.95rem;
+        color: #546e8a;
+        font-weight: 400;
+        letter-spacing: 0.3px;
+    }
+
+    div[data-testid="metric-container"] {
+        background: #0d1b2a;
+        border: 1px solid #1e3a5f;
+        border-radius: 12px;
+        padding: 20px 24px;
+    }
+    div[data-testid="metric-container"] label {
+        font-size: 0.75rem !important;
+        font-weight: 500 !important;
+        color: #546e8a !important;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+    }
+    div[data-testid="metric-container"] [data-testid="stMetricValue"] {
+        font-size: 1.8rem !important;
+        font-weight: 600 !important;
+        color: #e2e8f0 !important;
+    }
+
+    section[data-testid="stSidebar"] {
+        background-color: #0a1628;
+        border-right: 1px solid #1e3a5f;
+    }
+    section[data-testid="stSidebar"] * { color: #c0cfe0 !important; }
+    .stSelectbox > div > div {
+        background-color: #0d1b2a !important;
+        border: 1px solid #1e3a5f !important;
+        border-radius: 8px !important;
+    }
+    .stButton > button {
+        background: linear-gradient(135deg, #1e3a5f, #2563eb) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.3px;
+    }
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #2563eb, #3b82f6) !important;
+    }
+
+    hr { border-color: #1e3a5f !important; }
+    .sidebar-badge {
+        background: #0f2744;
+        border: 1px solid #1e3a5f;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 0.8rem;
+        color: #7eb8f7;
+        margin-top: 12px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -87,40 +164,48 @@ def create_surface(data, spot, symbol, source):
     fig = go.Figure()
     fig.add_trace(go.Surface(
         x=X, y=Y, z=Z,
-        colorscale='RdYlBu_r', opacity=0.95,
+        colorscale='Blues', opacity=0.92,
         hoverinfo='text', text=hover,
-        colorbar=dict(title='IV (%)', len=0.7, thickness=15,
-                      tickfont=dict(color='white'), titlefont=dict(color='white'))
+        colorbar=dict(
+            title=dict(text='IV (%)', font=dict(color='#8ba8c8', size=12)),
+            len=0.65, thickness=12,
+            tickfont=dict(color='#8ba8c8', size=11),
+            bgcolor='rgba(0,0,0,0)',
+            bordercolor='#1e3a5f', borderwidth=1
+        )
     ))
     fig.add_trace(go.Scatter3d(
         x=[spot] * len(exps), y=list(range(len(exps))), z=Z[:, spot_idx],
-        mode='lines', line=dict(color='white', width=4),
+        mode='lines', line=dict(color='#7eb8f7', width=5),
         name=f'ATM ${spot:.0f}', hoverinfo='skip'
     ))
 
     fig.update_layout(
-        title=dict(
-            text=f'{symbol} Implied Volatility Surface  |  Spot ${spot:.2f}',
-            x=0.5, font=dict(size=18, color='white')
-        ),
         scene=dict(
-            xaxis=dict(title='Strike ($)', backgroundcolor='#0e1117',
-                       gridcolor='#2a2a2a', color='white'),
-            yaxis=dict(title='Expiration', backgroundcolor='#0e1117',
-                       gridcolor='#2a2a2a', color='white',
+            xaxis=dict(title='Strike ($)', backgroundcolor='#080c14',
+                       gridcolor='#1e3a5f', color='#8ba8c8', linecolor='#1e3a5f'),
+            yaxis=dict(title='', backgroundcolor='#080c14',
+                       gridcolor='#1e3a5f', color='#8ba8c8',
                        ticktext=[e[5:] for e in exps],
                        tickvals=list(range(len(exps)))),
-            zaxis=dict(title='IV (%)', backgroundcolor='#0e1117',
-                       gridcolor='#2a2a2a', color='white',
+            zaxis=dict(title='IV (%)', backgroundcolor='#080c14',
+                       gridcolor='#1e3a5f', color='#8ba8c8',
                        range=[int(Z.min()) - 1, int(Z.max()) + 2]),
-            camera=dict(eye=dict(x=1.8, y=-1.8, z=1.0)),
-            aspectratio=dict(x=1.5, y=1.2, z=0.8),
+            camera=dict(eye=dict(x=1.7, y=-1.6, z=0.9)),
+            aspectratio=dict(x=1.4, y=1.1, z=0.75),
+            bgcolor='#080c14',
         ),
-        paper_bgcolor='#0e1117',
-        font=dict(color='white'),
-        height=640,
-        margin=dict(l=0, r=0, t=60, b=0),
-        legend=dict(bgcolor='rgba(30,33,48,0.8)', font=dict(color='white'))
+        paper_bgcolor='#080c14',
+        font=dict(color='#8ba8c8', family='Inter'),
+        height=580,
+        margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(
+            bgcolor='rgba(13,27,42,0.9)',
+            bordercolor='#1e3a5f', borderwidth=1,
+            font=dict(color='#c0cfe0')
+        ),
+        hoverlabel=dict(bgcolor='#0d1b2a', bordercolor='#1e3a5f',
+                        font=dict(color='white'))
     )
     return fig
 
@@ -134,20 +219,28 @@ def create_skew(data, spot):
     fig.add_trace(go.Scatter(
         x=sk['strike'], y=sk['iv'] * 100,
         mode='lines+markers',
-        line=dict(color='#00d4ff', width=2.5),
-        marker=dict(size=4),
+        line=dict(color='#7eb8f7', width=2.5),
+        marker=dict(size=5, color='#7eb8f7',
+                    line=dict(color='#080c14', width=1)),
+        fill='tozeroy', fillcolor='rgba(126,184,247,0.07)',
         hovertemplate='$%{x:.0f}  IV: %{y:.1f}%<extra></extra>'
     ))
-    fig.add_vline(x=spot, line_dash="dash", line_color="#ff6666", line_width=1.5,
-                  annotation_text="ATM", annotation_font_color="#ff6666")
+    fig.add_vline(x=spot, line_dash="dash", line_color="#a78bfa", line_width=1.5,
+                  annotation_text="ATM", annotation_font_color="#a78bfa",
+                  annotation_font_size=11)
     fig.update_layout(
-        title=dict(text=f'Volatility Smile  ({front_exp})', x=0.5,
-                   font=dict(size=14, color='white')),
-        xaxis=dict(title='Strike ($)', gridcolor='#2a2a2a', color='white'),
-        yaxis=dict(title='IV (%)', gridcolor='#2a2a2a', color='white'),
-        paper_bgcolor='#0e1117', plot_bgcolor='#161b27',
-        font=dict(color='white'), height=380, showlegend=False,
-        margin=dict(l=50, r=20, t=50, b=50)
+        title=dict(text=f'Volatility Smile  ·  {front_exp}', x=0,
+                   font=dict(size=13, color='#c0cfe0', family='Inter')),
+        xaxis=dict(title='Strike ($)', gridcolor='#0d1b2a', color='#546e8a',
+                   linecolor='#1e3a5f', tickformat='$,.0f'),
+        yaxis=dict(title='IV (%)', gridcolor='#0d1b2a', color='#546e8a',
+                   linecolor='#1e3a5f'),
+        paper_bgcolor='#080c14', plot_bgcolor='#0a1220',
+        font=dict(color='#8ba8c8', family='Inter'),
+        height=340, showlegend=False,
+        margin=dict(l=50, r=20, t=40, b=50),
+        hoverlabel=dict(bgcolor='#0d1b2a', bordercolor='#1e3a5f',
+                        font=dict(color='white'))
     )
     return fig
 
@@ -163,38 +256,55 @@ def create_term(data, spot):
     fig.add_trace(go.Scatter(
         x=list(range(len(term))), y=term.values,
         mode='lines+markers',
-        line=dict(color='#00ff99', width=2.5),
-        marker=dict(size=9),
+        line=dict(color='#a78bfa', width=2.5),
+        marker=dict(size=8, color='#a78bfa', symbol='circle',
+                    line=dict(color='#080c14', width=2)),
+        fill='tozeroy', fillcolor='rgba(167,139,250,0.07)',
         hovertemplate='%{customdata}  ATM IV: %{y:.1f}%<extra></extra>',
         customdata=term.index.tolist()
     ))
     fig.update_layout(
-        title=dict(text='ATM Term Structure', x=0.5,
-                   font=dict(size=14, color='white')),
+        title=dict(text='ATM Term Structure', x=0,
+                   font=dict(size=13, color='#c0cfe0', family='Inter')),
         xaxis=dict(title='Expiration', ticktext=[e[5:] for e in term.index],
-                   tickvals=list(range(len(term))), gridcolor='#2a2a2a', color='white'),
-        yaxis=dict(title='IV (%)', gridcolor='#2a2a2a', color='white'),
-        paper_bgcolor='#0e1117', plot_bgcolor='#161b27',
-        font=dict(color='white'), height=380, showlegend=False,
-        margin=dict(l=50, r=20, t=50, b=50)
+                   tickvals=list(range(len(term))),
+                   gridcolor='#0d1b2a', color='#546e8a', linecolor='#1e3a5f'),
+        yaxis=dict(title='IV (%)', gridcolor='#0d1b2a', color='#546e8a',
+                   linecolor='#1e3a5f'),
+        paper_bgcolor='#080c14', plot_bgcolor='#0a1220',
+        font=dict(color='#8ba8c8', family='Inter'),
+        height=340, showlegend=False,
+        margin=dict(l=50, r=20, t=40, b=50),
+        hoverlabel=dict(bgcolor='#0d1b2a', bordercolor='#1e3a5f',
+                        font=dict(color='white'))
     )
     return fig
 
 
 def main():
-    st.markdown('<h1 class="main-header">📊 Implied Volatility Surface</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Options volatility visualization | Meilin Pan</p>',
-                unsafe_allow_html=True)
+    st.markdown("""
+    <div class="header-wrapper">
+        <div class="header-title">Implied Volatility Surface</div>
+        <div class="header-sub">Options analytics · Meilin Pan</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     with st.sidebar:
-        st.header("Settings")
-        symbol = st.selectbox("Symbol", ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"])
-        if st.button("Refresh", use_container_width=True):
+        st.markdown("### Settings")
+        symbol = st.selectbox("Symbol", ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"],
+                              label_visibility="collapsed")
+        st.markdown("")
+        if st.button("↻  Refresh Data", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
         st.markdown("---")
-        st.caption("Synthetic IV surface with realistic equity skew and term structure.")
-        st.markdown("[GitHub](https://github.com/MeilinP) | [LinkedIn](https://linkedin.com/in/meilinp123)")
+        st.markdown("""
+        <div class="sidebar-badge">
+            Live spot via yfinance<br>Synthetic IV surface
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("")
+        st.caption("[GitHub](https://github.com/MeilinP) · [LinkedIn](https://linkedin.com/in/meilinp123)")
 
     data, spot, source = fetch_data(symbol)
     df = pd.DataFrame(data)
@@ -210,7 +320,7 @@ def main():
     c3.metric("ATM IV", f"{atm_iv:.1f}%")
     c4.metric("25Δ Put Skew", f"{put_skew:+.1f}%")
 
-    st.markdown("---")
+    st.markdown("<br>", unsafe_allow_html=True)
     st.plotly_chart(create_surface(data, spot, symbol, source), use_container_width=True)
 
     left, right = st.columns(2)
