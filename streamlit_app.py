@@ -108,7 +108,7 @@ def create_surface(data: List[Dict], spot: float, symbol: str) -> go.Figure:
         colorbar=dict(title=dict(text='IV %', font=dict(color='white')),
                       thickness=15, len=0.5,
                       tickfont=dict(color='white')),
-        hoverinfo='text',
+        hovertemplate='%{text}<extra></extra>',
         text=hover_text
     )])
     fig.update_layout(
