@@ -40,7 +40,9 @@ def fetch_data(symbol: str) -> Tuple[List[Dict], float, str, str]:
     data = []
 
     try:
-        expirations = ticker.options[:8]
+        today = datetime.now().date()
+        expirations = [e for e in ticker.options
+                       if (datetime.strptime(e, '%Y-%m-%d').date() - today).days >= 7][:8]
         for exp in expirations:
             chain = ticker.option_chain(exp)
             for df_opt, opt_type in [(chain.calls, 'call'), (chain.puts, 'put')]:
