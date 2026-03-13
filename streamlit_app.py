@@ -96,14 +96,20 @@ def create_surface(data: List[Dict], spot: float, symbol: str) -> go.Figure:
     Z = smoothed * 100
     X, Y = np.meshgrid(strikes, np.arange(len(exps)))
 
+    hover_text = [
+        [f"Strike: ${strikes[j]:.0f}<br>Expiry: {exps[i]}<br>IV: {Z[i,j]:.1f}%"
+         for j in range(len(strikes))]
+        for i in range(len(exps))
+    ]
+
     fig = go.Figure(data=[go.Surface(
         x=X, y=Y, z=Z,
         colorscale='Magma',
         colorbar=dict(title=dict(text='IV %', font=dict(color='white')),
                       thickness=15, len=0.5,
                       tickfont=dict(color='white')),
-        hovertemplate='Strike: $%{x:.0f}<br>Expiry: %{customdata[0]}<br>IV: %{z:.1f}%<extra></extra>',
-        customdata=np.array([[[exps[i]] for _ in strikes] for i in range(len(exps))])
+        hoverinfo='text',
+        text=hover_text
     )])
     fig.update_layout(
         title=f"{symbol} Live Volatility Surface",
