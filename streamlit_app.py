@@ -182,36 +182,50 @@ def fetch_data(symbol: str):
                 continue
             T = dte / 365.0
             chain = ticker.option_chain(exp)
-            calls = chain.calls
-            debug.append(f"  {exp} (dte={dte}): {len(calls)} calls")
-            for _, row in calls.iterrows():
-                strike = float(row['strike'])
-                bid  = float(row['bid'])       if pd.notna(row['bid'])        else 0.0
-                ask  = float(row['ask'])       if pd.notna(row['ask'])        else 0.0
-                last = float(row['lastPrice']) if pd.notna(row['lastPrice'])  else 0.0
+            debug.append(f"  {exp} (dte={dte}): {len(chain.calls)} calls, {len(chain.puts)} puts")
 
-                if bid > 0 and ask > 0:
-                    price = (bid + ask) / 2.0
-                elif last > 0:
-                    price = last
-                else:
-                    continue
+            # Use OTM options only: calls above spot, puts below spot
+            for opt_type, df_opt in [('call', chain.calls), ('put', chain.puts)]:
+                for _, row in df_opt.iterrows():
+                    strike = float(row['strike'])
+                    moneyness = strike / spot
 
-                moneyness = strike / spot
-                if not (0.80 <= moneyness <= 1.20 and price > 0.01):
-                    continue
+                    # OTM only
+                    if opt_type == 'call' and moneyness < 1.0:
+                        continue
+                    if opt_type == 'put' and moneyness > 1.0:
+                        continue
+                    if not (0.80 <= moneyness <= 1.20):
+                        continue
 
-                iv = _calc_iv(price, spot, strike, T)
-                if np.isnan(iv) or not (0.03 < iv < 2.0):
-                    continue
+                    bid  = float(row['bid'])       if pd.notna(row['bid'])       else 0.0
+                    ask  = float(row['ask'])       if pd.notna(row['ask'])       else 0.0
+                    last = float(row['lastPrice']) if pd.notna(row['lastPrice']) else 0.0
 
-                data.append({
-                    'expiration': exp,
-                    'strike': strike,
-                    'iv': iv,
-                    'type': 'call',
-                    'dte': dte
-                })
+                    if bid > 0 and ask > 0:
+                        price = (bid + ask) / 2.0
+                        # Skip wide spreads (illiquid)
+                        if (ask - bid) / ask > 0.5:
+                            continue
+                    elif last > 0:
+                        price = last
+                    else:
+                        continue
+
+                    if price < 0.05:
+                        continue
+
+                    iv = _calc_iv(price, spot, strike, T, option_type=opt_type)
+                    if np.isnan(iv) or not (0.03 < iv < 1.50):
+                        continue
+
+                    data.append({
+                        'expiration': exp,
+                        'strike': strike,
+                        'iv': iv,
+                        'type': opt_type,
+                        'dte': dte
+                    })
 
         debug.append(f"valid data points: {len(data)}")
         if len(data) > 20:
