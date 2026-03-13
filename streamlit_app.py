@@ -94,16 +94,18 @@ def create_surface(data: List[Dict], spot: float, symbol: str) -> go.Figure:
     strikes = pivot.columns.values
     exps = pivot.index.tolist()
     Z = smoothed * 100
-    X, Y = np.meshgrid(strikes, np.arange(len(exps)))
 
-    hover_text = [
-        [f"Strike: ${strikes[j]:.0f}<br>Expiry: {exps[i]}<br>IV: {Z[i,j]:.1f}%"
-         for j in range(len(strikes))]
-        for i in range(len(exps))
-    ]
+    hover_text = np.array(
+        [[f"Strike: ${strikes[j]:.0f}<br>Expiry: {exps[i]}<br>IV: {Z[i,j]:.1f}%"
+          for j in range(len(strikes))]
+         for i in range(len(exps))],
+        dtype=object
+    )
 
     fig = go.Figure(data=[go.Surface(
-        x=X, y=Y, z=Z,
+        x=strikes,
+        y=list(range(len(exps))),
+        z=Z,
         colorscale='Magma',
         colorbar=dict(title=dict(text='IV %', font=dict(color='white')),
                       thickness=15, len=0.5,
