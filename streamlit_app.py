@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from scipy.ndimage import gaussian_filter
 
 st.set_page_config(page_title="Live IV Surface", page_icon="📊", layout="wide")
 
@@ -88,10 +89,11 @@ def create_surface(data: List[Dict], spot: float, symbol: str) -> go.Figure:
     df = pd.DataFrame(data)
     pivot = df.pivot_table(index='expiration', columns='strike', values='iv', aggfunc='mean')
     pivot = pivot.interpolate(method='linear', axis=1).interpolate(method='linear', axis=0).ffill().bfill()
+    smoothed = gaussian_filter(pivot.values, sigma=1.2)
 
     strikes = pivot.columns.values
     exps = pivot.index.tolist()
-    Z = pivot.values * 100
+    Z = smoothed * 100
     X, Y = np.meshgrid(strikes, np.arange(len(exps)))
 
     fig = go.Figure(data=[go.Surface(
@@ -120,7 +122,7 @@ def create_skew(data: List[Dict], spot: float) -> go.Figure:
     df = pd.DataFrame(data)
     front = sorted(df['expiration'].unique())[0]
     skew = df[df['expiration'] == front].sort_values('strike')
-    skew['iv_smooth'] = skew['iv'].rolling(window=3, center=True).mean().fillna(skew['iv'])
+    skew['iv_smooth'] = skew['iv'].rolling(window=7, center=True, min_periods=1).mean()
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=skew['strike'], y=skew['iv_smooth'] * 100,
